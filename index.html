@@ -36,7 +36,7 @@ li.trade{display:flex;justify-content:space-between;gap:.5rem;padding:.75rem 1re
     <div>
       <p class="kicker">ICC Desk</p>
       <h1>Crypto structure trainer</h1>
-      <p class="muted" style="max-width:36rem;margin-top:.25rem">Paper bot. It only buys or sells a continuation after a 1h indication and a pullback. Simulated prices. No real orders.</p>
+      <p class="muted" style="max-width:36rem;margin-top:.25rem">Paper bot on live Binance 15-minute candles. It only buys or sells a continuation after a 1h indication and a pullback. No orders are sent.</p>
     </div>
     <div>
       <p class="mono muted" style="font-size:.75rem">Marked equity</p>
@@ -107,7 +107,7 @@ const risk=e.equity*(e.riskPct/100),qty=risk/dist,entryFee=entry*qty*FEE;if(!Num
 e.equity-=entryFee;mark(e);const target=s.side==="long"?entry+dist*e.rewardR:entry-dist*e.rewardR;
 e.open={id:++e.seq,side:s.side,entry,stop,target,qty,risk,entryFee,entryIndex:bar.i};e.setup=null;e.phase="trade";
 e.note=`Continuation. ${s.side==="long"?"Bought":"Sold"} at ${px(entry)}. Stop ${px(stop)} beyond the correction. Target ${e.rewardR}R at ${px(target)}.`}
-function create(id,risk,reward){const pair=PAIRS.find(p=>p.id===id)||PAIRS[0];return{pair,bars:barsFor(pair),cursor:0,hours:[],lastHigh:null,lastLow:null,bias:0,setup:null,open:null,trades:[],equity:START,start:START,peak:START,maxDd:0,phase:"scan",note:"Reading the 1h structure before the first indication.",riskPct:risk,rewardR:reward,seq:0,curve:[START]}}
+function create(id,risk,reward,bars){const pair=PAIRS.find(p=>p.id===id)||PAIRS[0];return{pair,bars,cursor:0,hours:[],lastHigh:null,lastLow:null,bias:0,setup:null,open:null,trades:[],equity:START,start:START,peak:START,maxDd:0,phase:"scan",note:"Reading live Binance structure.",riskPct:risk,rewardR:reward,seq:0,curve:[START]}}
 function step(e){if(e.cursor>=e.bars.length)return false;const bar=e.bars[e.cursor];e.cursor++;let spoke=false;
 if(e.open){const t=e.open;if(t.side==="long"?bar.low<=t.stop:bar.high>=t.stop){closeTrade(e,t.stop,"stop",bar);spoke=true}else if(t.side==="long"?bar.high>=t.target:bar.low<=t.target){closeTrade(e,t.target,"target",bar);spoke=true}}
 let flip=null;if(bar.i>=3&&bar.i%4===3){const slice=e.bars.slice(bar.i-3,bar.i+1);const hour={open:slice[0].open,high:Math.max(...slice.map(b=>b.high)),low:Math.min(...slice.map(b=>b.low)),close:slice[3].close};e.hours.push(hour);swings(e);const prev=e.hours[e.hours.length-2];
@@ -126,33 +126,37 @@ e.curve.push(e.equity);return true}
 function marked(e){if(!e.open)return e.equity;const c=e.bars[e.cursor-1]?.close??e.open.entry;const dir=e.open.side==="long"?1:-1;return e.equity+dir*(c-e.open.entry)*e.open.qty}
 function summary(e){const wins=e.trades.filter(t=>t.pnl>0),losses=e.trades.filter(t=>t.pnl<=0);const gw=wins.reduce((s,t)=>s+t.pnl,0),gl=Math.abs(losses.reduce((s,t)=>s+t.pnl,0));
 return{trades:e.trades.length,wins:wins.length,win:e.trades.length?wins.length/e.trades.length:0,pf:gl===0?(gw>0?Infinity:0):gw/gl,net:marked(e)-e.start,dd:e.maxDd}}
-let pairId="BTC",risk=1,reward=2,speed=4,running=true,engine=null,timer=null;
-function boot(){engine=create(pairId,risk,reward);for(let i=0;i<WARM;i++)step(engine);paint();arm()}
-function arm(){clearInterval(timer);if(!running)return;const ms=speed===1?340:speed===4?100:40,burst=speed===16?3:1;
-timer=setInterval(()=>{if(engine.cursor>=engine.bars.length){running=false;clearInterval(timer);paint();return}for(let i=0;i<burst;i++)if(!step(engine))break;paint()},ms)}
+let pairId="BTC",risk=1,reward=2,running=true,engine=null,timer=null,forming=null,feedNote="Loading Binance…";
+function mapK(k,i){return{i,time:+k[0],open:+k[1],high:+k[2],low:+k[3],close:+k[4],volume:+k[5]}}
+async function fetchKlines(id,limit){const res=await fetch(`https://data-api.binance.vision/api/v3/klines?symbol=${id}USDT&interval=15m&limit=${limit}`);if(!res.ok)throw new Error(String(res.status));return res.json()}
+async function boot(){clearInterval(timer);forming=null;feedNote="Loading Binance 15m…";const meta=document.getElementById("pairMeta");if(meta)meta.textContent=feedNote;const note=document.getElementById("note");if(note)note.textContent="Pulling real candles. No orders are sent.";
+try{const rows=await fetchKlines(pairId,1000);if(!Array.isArray(rows)||rows.length<80)throw new Error("short");const closed=rows.slice(0,-1).map(mapK);forming=mapK(rows[rows.length-1],closed.length);engine=create(pairId,risk,reward,closed);while(step(engine)){}feedNote="Live Binance 15m. Paper only.";paint();arm()}catch(e){feedNote="Binance did not answer. Nothing is trading.";if(meta)meta.textContent=feedNote}}
+function arm(){clearInterval(timer);if(!running)return;timer=setInterval(poll,10000)}
+async function poll(){if(!engine||!forming)return;try{const rows=await fetchKlines(pairId,2);if(!Array.isArray(rows)||!rows.length)return;const latest=mapK(rows[rows.length-1],0);const prev=rows.length>1?mapK(rows[0],0):null;if(latest.time!==forming.time){const closed=prev&&prev.time===forming.time?prev:{...forming};closed.i=engine.bars.length;engine.bars.push(closed);step(engine);forming={...latest,i:engine.bars.length}}else forming={...latest,i:engine.bars.length};feedNote="Live Binance 15m. Paper only.";paint()}catch(e){feedNote="Live feed hiccup. Still paper only.";paint()}}
 function paint(){const e=engine,s=summary(e),m=marked(e),last=e.bars[Math.max(0,e.cursor-1)];
 document.getElementById("equityNow").textContent=usd(m);const net=document.getElementById("net");net.textContent=(s.net>=0?"+":"")+usd(s.net);net.className="mono "+(s.net>=0?"up":"down");
 document.getElementById("pairTitle").textContent=`${e.pair.name} · ${e.pair.id}/USDT`;
-document.getElementById("pairMeta").textContent=`${px(last?.close??e.pair.start)} · 15m · bar ${e.cursor}/${TAPE}`;
+const shown=forming?.close??last?.close??e.pair.start;const stamp=new Date(forming?.time??last?.time??Date.now()).toLocaleString();
+document.getElementById("pairMeta").textContent=`${px(shown)} · ${feedNote} · ${stamp}`;
 document.getElementById("bias").textContent="Bias "+(e.bias===1?"long":e.bias===-1?"short":"flat");
 document.getElementById("phase").textContent=e.phase==="trade"?"continuation":e.phase;
 document.getElementById("note").textContent=e.note;
 const pi=e.phase==="indication"?0:e.phase==="correction"?1:e.phase==="trade"?2:-1;
 document.getElementById("pillars").innerHTML=["Indication","Correction","Continuation"].map((l,i)=>`<li class="${i===pi?"on":""}">${l}</li>`).join("");
-const pf=!s.trades?"\u2014":s.pf===Infinity?"\u221e":s.pf.toFixed(2);
-document.getElementById("stats").innerHTML=[["Win rate",s.trades?Math.round(s.win*100)+"%":"\u2014"],["Profit factor",pf],["Trades",`${s.wins}/${s.trades}`],["Max drawdown",(s.dd*100).toFixed(1)+"%"]].map(([k,v])=>`<div class="card stat"><span class="muted" style="font-size:.75rem">${k}</span><b>${v}</b></div>`).join("");
-const done=e.cursor>=e.bars.length;
+const pf=!s.trades?"—":s.pf===Infinity?"∞":s.pf.toFixed(2);
+document.getElementById("stats").innerHTML=[["Win rate",s.trades?Math.round(s.win*100)+"%":"—"],["Profit factor",pf],["Trades",`${s.wins}/${s.trades}`],["Max drawdown",(s.dd*100).toFixed(1)+"%"]].map(([k,v])=>`<div class="card stat"><span class="muted" style="font-size:.75rem">${k}</span><b>${v}</b></div>`).join("");
+const done=false;
 document.getElementById("controls").innerHTML=PAIRS.map(p=>`<button class="${p.id===e.pair.id?"on":""}" data-pair="${p.id}">${p.id}</button>`).join("")+
-`<span style="flex:1"></span><button class="primary" id="play" ${done?"disabled":""}>${done?"Tape done":running?"Pause":"Train"}</button><button id="reset">Reset</button>`;
+`<span style="flex:1"></span><button class="primary" id="play">${running?"Pause":"Watch"}</button><button id="reset">Reset</button>`;
 document.getElementById("riskBox").innerHTML=`<p class="muted" style="font-size:.75rem;letter-spacing:.06em">RISK ON THE NEXT ENTRY</p><div class="row" style="margin-top:.6rem">${[0.5,1,2].map(v=>`<button style="flex:1" class="${risk===v?"on":""}" data-risk="${v}">${v}%</button>`).join("")}</div>
 <p class="muted" style="font-size:.75rem;letter-spacing:.06em;margin-top:.8rem">TARGET</p><div class="row" style="margin-top:.6rem">${[1.5,2,3].map(v=>`<button style="flex:1" class="${reward===v?"on":""}" data-reward="${v}">${v}R</button>`).join("")}</div>
-<p class="muted" style="font-size:.75rem;letter-spacing:.06em;margin-top:.8rem">SPEED</p><div class="row" style="margin-top:.6rem">${[[1,"1\u00d7"],[4,"4\u00d7"],[16,"16\u00d7"]].map(([id,l])=>`<button style="flex:1" class="${speed===id?"on":""}" data-speed="${id}">${l}</button>`).join("")}</div>`;
-const ob=document.getElementById("openBox");if(e.open){ob.hidden=false;ob.innerHTML=`<p class="muted" style="font-size:.75rem;letter-spacing:.06em">OPEN POSITION</p><p class="${e.open.side==="long"?"up":"down"}" style="font-size:1.15rem;font-weight:600;margin-top:.2rem">${e.open.side==="long"?"Long":"Short"} ${e.pair.id}</p><p class="mono muted" style="font-size:.8rem;margin-top:.4rem">Entry ${px(e.open.entry)} \u00b7 Stop ${px(e.open.stop)} \u00b7 Target ${px(e.open.target)} \u00b7 Risk ${usd(e.open.risk)}</p>`}else ob.hidden=true;
+<p class="muted" style="font-size:.75rem;letter-spacing:.06em;margin-top:.8rem">LIVE</p><p class="muted" style="margin-top:.4rem">Checks Binance when a 15m candle closes. Orders stay off.</p>`;
+const ob=document.getElementById("openBox");if(e.open){ob.hidden=false;ob.innerHTML=`<p class="muted" style="font-size:.75rem;letter-spacing:.06em">OPEN POSITION</p><p class="${e.open.side==="long"?"up":"down"}" style="font-size:1.15rem;font-weight:600;margin-top:.2rem">${e.open.side==="long"?"Long":"Short"} ${e.pair.id}</p><p class="mono muted" style="font-size:.8rem;margin-top:.4rem">Entry ${px(e.open.entry)} · Stop ${px(e.open.stop)} · Target ${px(e.open.target)} · Risk ${usd(e.open.risk)}</p>`}else ob.hidden=true;
 const journal=[...e.trades].reverse().slice(0,8);
-document.getElementById("journal").innerHTML=journal.length?journal.map(t=>`<li class="trade"><span><span class="${t.side==="long"?"up":"down"}">${t.side==="long"?"Long":"Short"}</span> <span class="muted">${t.reason}</span></span><span class="mono muted">${px(t.entry)} \u2192 ${px(t.exit)} \u00b7 <span class="${t.pnl>=0?"up":"down"}">${usd(t.pnl)}</span></span></li>`).join(""):`<p class="muted" style="padding:1rem">No closed trades yet. The bot is still waiting for a full ICC sequence.</p>`;
+document.getElementById("journal").innerHTML=journal.length?journal.map(t=>`<li class="trade"><span><span class="${t.side==="long"?"up":"down"}">${t.side==="long"?"Long":"Short"}</span> <span class="muted">${t.reason}</span></span><span class="mono muted">${px(t.entry)} → ${px(t.exit)} · <span class="${t.pnl>=0?"up":"down"}">${usd(t.pnl)}</span></span></li>`).join(""):`<p class="muted" style="padding:1rem">No closed trades yet. The bot is still waiting for a full ICC sequence.</p>`;
 drawCandles();drawEquity()}
 function drawCandles(){const c=document.getElementById("chart"),d=c.getContext("2d");const w=c.clientWidth,h=c.clientHeight;const r=devicePixelRatio||1;c.width=w*r;c.height=h*r;d.setTransform(r,0,0,r,0,0);d.clearRect(0,0,w,h);d.fillStyle="#12171d";d.fillRect(0,0,w,h);
-const view=engine.bars.slice(Math.max(0,engine.cursor-90),engine.cursor);if(!view.length)return;let hi=-Infinity,lo=Infinity;for(const b of view){hi=Math.max(hi,b.high);lo=Math.min(lo,b.low)}if(engine.open){hi=Math.max(hi,engine.open.target,engine.open.stop);lo=Math.min(lo,engine.open.target,engine.open.stop)}
+const src=forming?engine.bars.concat([forming]):engine.bars;const view=src.slice(-90);if(!view.length)return;let hi=-Infinity,lo=Infinity;for(const b of view){hi=Math.max(hi,b.high);lo=Math.min(lo,b.low)}if(engine.open){hi=Math.max(hi,engine.open.target,engine.open.stop);lo=Math.min(lo,engine.open.target,engine.open.stop)}
 const pad=(hi-lo)*0.08||1;hi+=pad;lo-=pad;const cw=w/view.length,scale=v=>h-((v-lo)/(hi-lo))*h;
 if(engine.setup){d.strokeStyle="#d7a441";d.setLineDash([4,4]);d.beginPath();d.moveTo(0,scale(engine.setup.level));d.lineTo(w,scale(engine.setup.level));d.stroke();d.setLineDash([])}
 if(engine.open){d.strokeStyle="#e15d55";d.beginPath();d.moveTo(0,scale(engine.open.stop));d.lineTo(w,scale(engine.open.stop));d.stroke();d.strokeStyle="#3cba8b";d.beginPath();d.moveTo(0,scale(engine.open.target));d.lineTo(w,scale(engine.open.target));d.stroke()}
@@ -160,7 +164,7 @@ view.forEach((b,i)=>{const x=i*cw+cw/2,up=b.close>=b.open;d.strokeStyle=up?"#3cb
 function drawEquity(){const c=document.getElementById("equity"),d=c.getContext("2d");const w=c.clientWidth,h=c.clientHeight;const r=devicePixelRatio||1;c.width=w*r;c.height=h*r;d.setTransform(r,0,0,r,0,0);d.clearRect(0,0,w,h);
 const data=engine.curve.filter((_,i)=>i%3===0).slice(-240);if(data.length<2)return;const hi=Math.max(...data),lo=Math.min(...data),span=hi-lo||1;
 d.beginPath();data.forEach((v,i)=>{const x=i/(data.length-1)*w,y=h-((v-lo)/span)*(h-4)-2;i?d.lineTo(x,y):d.moveTo(x,y)});d.strokeStyle="#d7a441";d.lineWidth=1.5;d.stroke();d.lineTo(w,h);d.lineTo(0,h);d.closePath();d.fillStyle="rgba(215,164,65,.18)";d.fill()}
-document.body.addEventListener("click",ev=>{const t=ev.target.closest("button");if(!t)return;if(t.dataset.pair){pairId=t.dataset.pair;running=true;boot()}else if(t.id==="play"){running=!running;arm();paint()}else if(t.id==="reset"){running=true;boot()}else if(t.dataset.risk){risk=+t.dataset.risk;engine.riskPct=risk;paint()}else if(t.dataset.reward){reward=+t.dataset.reward;engine.rewardR=reward;paint()}else if(t.dataset.speed){speed=+t.dataset.speed;arm();paint()}});
+document.body.addEventListener("click",ev=>{const t=ev.target.closest("button");if(!t)return;if(t.dataset.pair){pairId=t.dataset.pair;running=true;boot()}else if(t.id==="play"){running=!running;arm();paint()}else if(t.id==="reset"){running=true;boot()}else if(t.dataset.risk){risk=+t.dataset.risk;engine.riskPct=risk;paint()}else if(t.dataset.reward){reward=+t.dataset.reward;engine.rewardR=reward;paint()}});
 addEventListener("resize",paint);boot();
 </script>
 </body>
