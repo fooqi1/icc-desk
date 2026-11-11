@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ICC Desk</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+:root{--bg:#090b0e;--surface:#12171d;--fg:#e7ece8;--muted:#8d9892;--border:#2a342e;--primary:#d7a441;--primary-fg:#1c1508;--up:#3cba8b;--down:#e15d55}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font-family:"IBM Plex Sans",system-ui,sans-serif}
+main{max-width:72rem;margin:0 auto;padding:1.25rem 1rem 2.5rem;display:flex;flex-direction:column;gap:1rem}
+.kicker{color:var(--primary);font-size:.75rem;letter-spacing:.14em;text-transform:uppercase;margin:0}
+h1{font-size:1.8rem;margin:.2rem 0}p{margin:0}.muted{color:var(--muted)}.mono{font-family:"IBM Plex Mono",monospace}
+.row{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center}
+button{min-height:2.75rem;border-radius:.6rem;border:1px solid var(--border);background:var(--surface);color:var(--fg);font:inherit;padding:0 .85rem;cursor:pointer}
+button.on,button.primary{background:var(--primary);color:var(--primary-fg);border-color:var(--primary);font-weight:600}
+button:disabled{opacity:.5;cursor:default}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:.75rem}
+.grid{display:grid;gap:1rem}@media(min-width:960px){.grid{grid-template-columns:minmax(0,1fr) 20rem}}
+.stats{display:grid;grid-template-columns:repeat(2,1fr);gap:.5rem}@media(min-width:640px){.stats{grid-template-columns:repeat(4,1fr)}}
+.stat{padding:.75rem 1rem}.stat b{display:block;font-family:"IBM Plex Mono",monospace;font-size:1.1rem;font-weight:500}
+canvas{width:100%;display:block}#chart{height:18rem}#equity{height:4rem}
+.pad{padding:1rem}.up{color:var(--up)}.down{color:var(--down)}
+.pillars{display:grid;grid-template-columns:repeat(3,1fr);gap:.4rem;margin-top:.75rem}
+.pillars li{list-style:none;border:1px solid var(--border);border-radius:.4rem;padding:.45rem .2rem;text-align:center;font-size:.75rem;color:var(--muted)}
+.pillars li.on{background:var(--primary);color:var(--primary-fg);border-color:var(--primary)}
+ul{list-style:none;margin:0;padding:0}
+li.trade{display:flex;justify-content:space-between;gap:.5rem;padding:.75rem 1rem;border-top:1px solid var(--border);font-size:.9rem}
+.head{display:flex;justify-content:space-between;gap:1rem;align-items:flex-end;flex-wrap:wrap}
+</style>
+</head>
+<body>
+<main>
+  <header class="head">
+    <div>
+      <p class="kicker">ICC Desk</p>
+      <h1>Crypto structure trainer</h1>
+      <p class="muted" style="max-width:36rem;margin-top:.25rem">Paper bot. It only buys or sells a continuation after a 1h indication and a pullback. Simulated prices. No real orders.</p>
+    </div>
+    <div>
+      <p class="mono muted" style="font-size:.75rem">Marked equity</p>
+      <p class="mono" id="equityNow" style="font-size:1.5rem">$10,000.00</p>
+      <p class="mono" id="net">$0.00</p>
+    </div>
+  </header>
+  <div class="row" id="controls"></div>
+  <section class="grid">
+    <div style="display:flex;flex-direction:column;gap:.75rem;min-width:0">
+      <div class="card">
+        <div class="pad" style="display:flex;justify-content:space-between;border-bottom:1px solid var(--border)">
+          <div><p id="pairTitle"></p><p class="mono muted" id="pairMeta" style="font-size:.75rem"></p></div>
+          <p class="mono muted" id="bias" style="font-size:.75rem"></p>
+        </div>
+        <canvas id="chart"></canvas>
+      </div>
+      <div class="stats" id="stats"></div>
+      <div class="card pad">
+        <div style="display:flex;justify-content:space-between"><p class="muted" style="font-size:.75rem;letter-spacing:.06em">EQUITY</p><p class="mono muted" style="font-size:.75rem">Realized, after fees</p></div>
+        <canvas id="equity"></canvas>
+      </div>
+    </div>
+    <aside style="display:flex;flex-direction:column;gap:.75rem">
+      <div class="card pad">
+        <p class="muted" style="font-size:.75rem;letter-spacing:.06em">PHASE</p>
+        <h2 id="phase" style="margin:.2rem 0 0;font-size:1.5rem;text-transform:capitalize">scan</h2>
+        <ol class="pillars" id="pillars"></ol>
+        <p id="note" style="margin-top:.75rem;line-height:1.45"></p>
+      </div>
+      <div class="card pad" id="riskBox"></div>
+      <div class="card pad" id="openBox" hidden></div>
+    </aside>
+  </section>
+  <section class="card">
+    <div class="pad" style="border-bottom:1px solid var(--border)"><h2 style="font-size:.95rem;margin:0">Journal</h2></div>
+    <div id="journal"></div>
+  </section>
+</main>
+<script>
+const PAIRS=[{id:"BTC",name:"Bitcoin",start:64250,vol:0.0036,seed:11},{id:"ETH",name:"Ethereum",start:3184,vol:0.0048,seed:29},{id:"SOL",name:"Solana",start:148.4,vol:0.0072,seed:47},{id:"BNB",name:"BNB",start:592,vol:0.0042,seed:61},{id:"XRP",name:"XRP",start:0.618,vol:0.0064,seed:83}];
+const START=10000,TAPE=1400,WARM=160,FEE=0.0004;
+const mulberry32=s=>{let a=s>>>0;return()=>{a|=0;a=(a+0x6d2b79f5)|0;let t=Math.imul(a^(a>>>15),1|a);t=(t+Math.imul(t^(t>>>7),61|t))^t;return((t^(t>>>14))>>>0)/4294967296}};
+const px=n=>{const a=Math.abs(n),d=a>=1000?1:a>=100?2:a>=1?3:5;return n.toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d})};
+const usd=n=>{const s=n<0?"-":"";return s+"$"+Math.abs(n).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})};
+function barsFor(spec){const rand=mulberry32(spec.seed),bars=[];let price=spec.start,dir=rand()>0.5?1:-1,left=0,kind="impulse";const t0=Date.UTC(2025,0,6);
+for(let i=0;i<TAPE;i++){if(left<=0){if(kind==="impulse"){kind="correct";left=6+Math.floor(rand()*16)}else{if(rand()<0.34)dir*=-1;kind="impulse";left=10+Math.floor(rand()*22)}}left--;
+const sign=kind==="impulse"?dir:-dir;const mag=kind==="impulse"?spec.vol*(0.65+rand()*1.15):spec.vol*(0.22+rand()*0.7);const ret=sign*mag+(rand()-0.5)*spec.vol*0.85;
+const open=price,close=Math.max(1e-6,open*Math.exp(ret)),body=Math.abs(close-open);
+const high=Math.max(open,close)+body*(0.12+rand()*0.85)+open*spec.vol*rand()*0.35;
+const low=Math.min(open,close)-body*(0.12+rand()*0.85)-open*spec.vol*rand()*0.35;
+const volume=(900+rand()*4200)*(kind==="impulse"?1.55:0.75)*(1+Math.abs(ret)/spec.vol);
+bars.push({i,time:t0+i*15*60*1000,open,high,low,close,volume});price=close}return bars}
+function mark(e){if(e.equity>e.peak)e.peak=e.equity;const dd=e.peak>0?(e.peak-e.equity)/e.peak:0;if(dd>e.maxDd)e.maxDd=dd}
+function swings(e){const h=e.hours,p=h.length-3;if(p<2)return;const high=h[p].high,low=h[p].low;
+if(high>h[p-1].high&&high>h[p-2].high&&high>h[p+1].high&&high>h[p+2].high)e.lastHigh={price:high,at:p};
+if(low<h[p-1].low&&low<h[p-2].low&&low<h[p+1].low&&low<h[p+2].low)e.lastLow={price:low,at:p}}
+function startSetup(e,side,born){const level=side==="long"?e.lastHigh?.price:e.lastLow?.price;const origin=side==="long"?e.lastLow?.price:e.lastHigh?.price;if(level==null||origin==null)return;
+if(side==="long"&&!(origin<level))return;if(side==="short"&&!(origin>level))return;e.setup={side,level,origin,extreme:level,armed:false,bornAt:born};e.phase="indication";
+e.note=`1h closed ${side==="long"?"above":"below"} ${px(level)}. That is the indication. Waiting for a correction back to the level — no chase.`}
+function cancel(e,note){e.setup=null;e.phase="scan";e.note=note}
+function closeTrade(e,price,reason,bar){const o=e.open;if(!o)return;const dir=o.side==="long"?1:-1;const exitFee=price*o.qty*FEE;const gross=dir*(price-o.entry)*o.qty;e.equity+=gross-exitFee;mark(e);
+const pnl=gross-o.entryFee-exitFee;e.trades.push({...o,exit:price,exitIndex:bar.i,reason,pnl,r:o.risk>0?pnl/o.risk:0});e.open=null;
+e.note=`${reason==="target"?"Target hit":reason==="stop"?"Stopped":"Bias flipped"} at ${px(price)}. ${usd(pnl)} on the ${o.side}.`;e.phase="scan"}
+function tryEnter(e,bar){const s=e.setup;if(!s||e.equity<=100)return;const entry=bar.close,buffer=entry*0.0004;const stop=s.side==="long"?s.extreme-buffer:s.extreme+buffer;const dist=Math.abs(entry-stop);const rel=dist/entry;
+if((s.side==="long"?stop>=entry:stop<=entry)||rel<0.0012||rel>0.04){cancel(e,"Continuation printed, but the stop under the correction was too tight or too wide. Skipped.");return}
+const risk=e.equity*(e.riskPct/100),qty=risk/dist,entryFee=entry*qty*FEE;if(!Number.isFinite(qty)||qty<=0||entryFee>e.equity*0.25){cancel(e,"Size did not make sense at this stop. Skipped.");return}
+e.equity-=entryFee;mark(e);const target=s.side==="long"?entry+dist*e.rewardR:entry-dist*e.rewardR;
+e.open={id:++e.seq,side:s.side,entry,stop,target,qty,risk,entryFee,entryIndex:bar.i};e.setup=null;e.phase="trade";
+e.note=`Continuation. ${s.side==="long"?"Bought":"Sold"} at ${px(entry)}. Stop ${px(stop)} beyond the correction. Target ${e.rewardR}R at ${px(target)}.`}
+function create(id,risk,reward){const pair=PAIRS.find(p=>p.id===id)||PAIRS[0];return{pair,bars:barsFor(pair),cursor:0,hours:[],lastHigh:null,lastLow:null,bias:0,setup:null,open:null,trades:[],equity:START,start:START,peak:START,maxDd:0,phase:"scan",note:"Reading the 1h structure before the first indication.",riskPct:risk,rewardR:reward,seq:0,curve:[START]}}
+function step(e){if(e.cursor>=e.bars.length)return false;const bar=e.bars[e.cursor];e.cursor++;let spoke=false;
+if(e.open){const t=e.open;if(t.side==="long"?bar.low<=t.stop:bar.high>=t.stop){closeTrade(e,t.stop,"stop",bar);spoke=true}else if(t.side==="long"?bar.high>=t.target:bar.low<=t.target){closeTrade(e,t.target,"target",bar);spoke=true}}
+let flip=null;if(bar.i>=3&&bar.i%4===3){const slice=e.bars.slice(bar.i-3,bar.i+1);const hour={open:slice[0].open,high:Math.max(...slice.map(b=>b.high)),low:Math.min(...slice.map(b=>b.low)),close:slice[3].close};e.hours.push(hour);swings(e);const prev=e.hours[e.hours.length-2];
+if(prev&&e.lastHigh&&prev.close<=e.lastHigh.price&&hour.close>e.lastHigh.price)flip="long";else if(prev&&e.lastLow&&prev.close>=e.lastLow.price&&hour.close<e.lastLow.price)flip="short";
+if(flip){e.bias=flip==="long"?1:-1;if(e.open&&((e.open.side==="long"&&flip==="short")||(e.open.side==="short"&&flip==="long"))){closeTrade(e,bar.close,"flip",bar);spoke=true}if(!e.open){startSetup(e,flip,bar.i);spoke=true}}}
+if(!e.open&&e.setup){const s=e.setup;const broke=s.side==="long"?bar.close<s.origin:bar.close>s.origin;
+if(broke){cancel(e,"Price closed through the origin of the indication. Setup cancelled.");spoke=true}
+else if(!s.armed&&bar.i-s.bornAt>48){cancel(e,"Twelve hours and no pullback. The bot does not chase the indication.");spoke=true}
+else if(s.armed&&bar.i-s.bornAt>80){cancel(e,"The correction never continued. Standing aside.");spoke=true}
+else{const tagged=s.side==="long"?bar.low<=s.level*1.0008:bar.high>=s.level*0.9992;if(tagged){s.armed=true;const seeded=s.extreme===s.level;s.extreme=s.side==="long"?Math.min(seeded?bar.low:s.extreme,bar.low):Math.max(seeded?bar.high:s.extreme,bar.high)}else if(s.armed){s.extreme=s.side==="long"?Math.min(s.extreme,bar.low):Math.max(s.extreme,bar.high)}
+const prevClose=bar.i>0?e.bars[bar.i-1].close:bar.close;const reclaimed=s.side==="long"?bar.close>s.level&&(bar.low<=s.level||prevClose<=s.level):bar.close<s.level&&(bar.high>=s.level||prevClose>=s.level);
+if(s.armed&&reclaimed&&bar.i!==s.bornAt){tryEnter(e,bar);spoke=true}else if(e.setup){e.phase=s.armed?"correction":"indication";e.note=s.armed?`Correction tagged ${px(s.level)}. Armed. The entry is a 15m close back through that level — continuation, not the pullback itself.`:`Indication is live at ${px(s.level)}. Still waiting for price to correct back into it.`;spoke=true}}}
+else if(e.open){e.phase="trade";const dir=e.open.side==="long"?1:-1;const openPnl=dir*(bar.close-e.open.entry)*e.open.qty;e.note=`${e.open.side==="long"?"Long":"Short"} from ${px(e.open.entry)}. Stop ${px(e.open.stop)} · target ${px(e.open.target)} · open ${usd(openPnl)}.`;spoke=true}
+if(!spoke){e.phase="scan";e.note=e.bias===0?"No confirmed 1h swing break yet. The bot will not guess a direction.":e.bias===1?"Higher-timeframe bias is up. Waiting for a fresh indication, not an old trend.":"Higher-timeframe bias is down. Waiting for a fresh indication, not an old trend."}
+e.curve.push(e.equity);return true}
+function marked(e){if(!e.open)return e.equity;const c=e.bars[e.cursor-1]?.close??e.open.entry;const dir=e.open.side==="long"?1:-1;return e.equity+dir*(c-e.open.entry)*e.open.qty}
+function summary(e){const wins=e.trades.filter(t=>t.pnl>0),losses=e.trades.filter(t=>t.pnl<=0);const gw=wins.reduce((s,t)=>s+t.pnl,0),gl=Math.abs(losses.reduce((s,t)=>s+t.pnl,0));
+return{trades:e.trades.length,wins:wins.length,win:e.trades.length?wins.length/e.trades.length:0,pf:gl===0?(gw>0?Infinity:0):gw/gl,net:marked(e)-e.start,dd:e.maxDd}}
+let pairId="BTC",risk=1,reward=2,speed=4,running=true,engine=null,timer=null;
+function boot(){engine=create(pairId,risk,reward);for(let i=0;i<WARM;i++)step(engine);paint();arm()}
+function arm(){clearInterval(timer);if(!running)return;const ms=speed===1?340:speed===4?100:40,burst=speed===16?3:1;
+timer=setInterval(()=>{if(engine.cursor>=engine.bars.length){running=false;clearInterval(timer);paint();return}for(let i=0;i<burst;i++)if(!step(engine))break;paint()},ms)}
+function paint(){const e=engine,s=summary(e),m=marked(e),last=e.bars[Math.max(0,e.cursor-1)];
+document.getElementById("equityNow").textContent=usd(m);const net=document.getElementById("net");net.textContent=(s.net>=0?"+":"")+usd(s.net);net.className="mono "+(s.net>=0?"up":"down");
+document.getElementById("pairTitle").textContent=`${e.pair.name} · ${e.pair.id}/USDT`;
+document.getElementById("pairMeta").textContent=`${px(last?.close??e.pair.start)} · 15m · bar ${e.cursor}/${TAPE}`;
+document.getElementById("bias").textContent="Bias "+(e.bias===1?"long":e.bias===-1?"short":"flat");
+document.getElementById("phase").textContent=e.phase==="trade"?"continuation":e.phase;
+document.getElementById("note").textContent=e.note;
+const pi=e.phase==="indication"?0:e.phase==="correction"?1:e.phase==="trade"?2:-1;
+document.getElementById("pillars").innerHTML=["Indication","Correction","Continuation"].map((l,i)=>`<li class="${i===pi?"on":""}">${l}</li>`).join("");
+const pf=!s.trades?"\u2014":s.pf===Infinity?"\u221e":s.pf.toFixed(2);
+document.getElementById("stats").innerHTML=[["Win rate",s.trades?Math.round(s.win*100)+"%":"\u2014"],["Profit factor",pf],["Trades",`${s.wins}/${s.trades}`],["Max drawdown",(s.dd*100).toFixed(1)+"%"]].map(([k,v])=>`<div class="card stat"><span class="muted" style="font-size:.75rem">${k}</span><b>${v}</b></div>`).join("");
+const done=e.cursor>=e.bars.length;
+document.getElementById("controls").innerHTML=PAIRS.map(p=>`<button class="${p.id===e.pair.id?"on":""}" data-pair="${p.id}">${p.id}</button>`).join("")+
+`<span style="flex:1"></span><button class="primary" id="play" ${done?"disabled":""}>${done?"Tape done":running?"Pause":"Train"}</button><button id="reset">Reset</button>`;
+document.getElementById("riskBox").innerHTML=`<p class="muted" style="font-size:.75rem;letter-spacing:.06em">RISK ON THE NEXT ENTRY</p><div class="row" style="margin-top:.6rem">${[0.5,1,2].map(v=>`<button style="flex:1" class="${risk===v?"on":""}" data-risk="${v}">${v}%</button>`).join("")}</div>
+<p class="muted" style="font-size:.75rem;letter-spacing:.06em;margin-top:.8rem">TARGET</p><div class="row" style="margin-top:.6rem">${[1.5,2,3].map(v=>`<button style="flex:1" class="${reward===v?"on":""}" data-reward="${v}">${v}R</button>`).join("")}</div>
+<p class="muted" style="font-size:.75rem;letter-spacing:.06em;margin-top:.8rem">SPEED</p><div class="row" style="margin-top:.6rem">${[[1,"1\u00d7"],[4,"4\u00d7"],[16,"16\u00d7"]].map(([id,l])=>`<button style="flex:1" class="${speed===id?"on":""}" data-speed="${id}">${l}</button>`).join("")}</div>`;
+const ob=document.getElementById("openBox");if(e.open){ob.hidden=false;ob.innerHTML=`<p class="muted" style="font-size:.75rem;letter-spacing:.06em">OPEN POSITION</p><p class="${e.open.side==="long"?"up":"down"}" style="font-size:1.15rem;font-weight:600;margin-top:.2rem">${e.open.side==="long"?"Long":"Short"} ${e.pair.id}</p><p class="mono muted" style="font-size:.8rem;margin-top:.4rem">Entry ${px(e.open.entry)} \u00b7 Stop ${px(e.open.stop)} \u00b7 Target ${px(e.open.target)} \u00b7 Risk ${usd(e.open.risk)}</p>`}else ob.hidden=true;
+const journal=[...e.trades].reverse().slice(0,8);
+document.getElementById("journal").innerHTML=journal.length?journal.map(t=>`<li class="trade"><span><span class="${t.side==="long"?"up":"down"}">${t.side==="long"?"Long":"Short"}</span> <span class="muted">${t.reason}</span></span><span class="mono muted">${px(t.entry)} \u2192 ${px(t.exit)} \u00b7 <span class="${t.pnl>=0?"up":"down"}">${usd(t.pnl)}</span></span></li>`).join(""):`<p class="muted" style="padding:1rem">No closed trades yet. The bot is still waiting for a full ICC sequence.</p>`;
+drawCandles();drawEquity()}
+function drawCandles(){const c=document.getElementById("chart"),d=c.getContext("2d");const w=c.clientWidth,h=c.clientHeight;const r=devicePixelRatio||1;c.width=w*r;c.height=h*r;d.setTransform(r,0,0,r,0,0);d.clearRect(0,0,w,h);d.fillStyle="#12171d";d.fillRect(0,0,w,h);
+const view=engine.bars.slice(Math.max(0,engine.cursor-90),engine.cursor);if(!view.length)return;let hi=-Infinity,lo=Infinity;for(const b of view){hi=Math.max(hi,b.high);lo=Math.min(lo,b.low)}if(engine.open){hi=Math.max(hi,engine.open.target,engine.open.stop);lo=Math.min(lo,engine.open.target,engine.open.stop)}
+const pad=(hi-lo)*0.08||1;hi+=pad;lo-=pad;const cw=w/view.length,scale=v=>h-((v-lo)/(hi-lo))*h;
+if(engine.setup){d.strokeStyle="#d7a441";d.setLineDash([4,4]);d.beginPath();d.moveTo(0,scale(engine.setup.level));d.lineTo(w,scale(engine.setup.level));d.stroke();d.setLineDash([])}
+if(engine.open){d.strokeStyle="#e15d55";d.beginPath();d.moveTo(0,scale(engine.open.stop));d.lineTo(w,scale(engine.open.stop));d.stroke();d.strokeStyle="#3cba8b";d.beginPath();d.moveTo(0,scale(engine.open.target));d.lineTo(w,scale(engine.open.target));d.stroke()}
+view.forEach((b,i)=>{const x=i*cw+cw/2,up=b.close>=b.open;d.strokeStyle=up?"#3cba8b":"#e15d55";d.fillStyle=d.strokeStyle;d.beginPath();d.moveTo(x,scale(b.high));d.lineTo(x,scale(b.low));d.stroke();const y1=scale(b.open),y2=scale(b.close);d.fillRect(x-Math.max(1,cw*0.28),Math.min(y1,y2),Math.max(2,cw*0.56),Math.max(1,Math.abs(y2-y1)))})}
+function drawEquity(){const c=document.getElementById("equity"),d=c.getContext("2d");const w=c.clientWidth,h=c.clientHeight;const r=devicePixelRatio||1;c.width=w*r;c.height=h*r;d.setTransform(r,0,0,r,0,0);d.clearRect(0,0,w,h);
+const data=engine.curve.filter((_,i)=>i%3===0).slice(-240);if(data.length<2)return;const hi=Math.max(...data),lo=Math.min(...data),span=hi-lo||1;
+d.beginPath();data.forEach((v,i)=>{const x=i/(data.length-1)*w,y=h-((v-lo)/span)*(h-4)-2;i?d.lineTo(x,y):d.moveTo(x,y)});d.strokeStyle="#d7a441";d.lineWidth=1.5;d.stroke();d.lineTo(w,h);d.lineTo(0,h);d.closePath();d.fillStyle="rgba(215,164,65,.18)";d.fill()}
+document.body.addEventListener("click",ev=>{const t=ev.target.closest("button");if(!t)return;if(t.dataset.pair){pairId=t.dataset.pair;running=true;boot()}else if(t.id==="play"){running=!running;arm();paint()}else if(t.id==="reset"){running=true;boot()}else if(t.dataset.risk){risk=+t.dataset.risk;engine.riskPct=risk;paint()}else if(t.dataset.reward){reward=+t.dataset.reward;engine.rewardR=reward;paint()}else if(t.dataset.speed){speed=+t.dataset.speed;arm();paint()}});
+addEventListener("resize",paint);boot();
+</script>
+</body>
+</html>
